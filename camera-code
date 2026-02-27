@@ -1,0 +1,67 @@
+def camera():
+    frame_skip = 20
+    frame_count = 0
+    cap = cv2.VideoCapture('udp://@0.0.0.0:11111')
+
+    net = cv2.dnn.readNet("./yolov3.weights", "./yolov3.cfg")
+    layer_names = net.getLayerNames()
+    output_layers = [layer_names[i[0] - 1] for i in [net.getUnconnectedOutLayers()]]
+    while True:
+        ret, frame = cap.read()
+
+        if not ret:
+            break
+
+        frame_count += 1
+        if frame_count % frame_skip != 0:
+            continue
+
+        frame = cv2.resize(frame, (int(frame.shape[1] * 0.4), int(frame.shape[0] * 0.4)))
+
+        height, width = frame.shape[:2]
+        blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
+        net.setInput(blob)
+        outs = net.forward(output_layers)
+
+        class_ids = []
+        confidences = []
+        boxes = []
+
+        for out in outs:
+            for detection in out:
+                scores = detection[5:]
+                class_id = np.argmax(scores)
+                confidence = scores[class_id]
+                if confidence > 0.2:
+                    center_x = int(detection[0] * width)
+                    center_y = int(detection[1] * height)
+                    w = int(detection[2] * width)
+                    h = int(detection[3] * height)
+                    x = int(center_x - w / 2)
+                    y = int(center_y - h / 2)
+                    boxes.append([x, y, w, h])
+                    confidences.append(float(confidence))
+                    class_ids.append(class_id)
+
+        indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
+
+        with open("./coco.names", "r") as f:
+            classes = [line.strip() for line in f.readlines()]
+
+        for i in range(len(boxes)):
+            if i in indexes:
+                label = str(classes[class_ids[i]])
+                confidence = confidences[i]
+                color = (0, 255, 0)
+                cv2.rectangle(frame, (boxes[i][0], boxes[i][1]), (boxes[i][0] + boxes[i][2], boxes[i][1] + boxes[i][3]),
+                              color, 2)
+                cv2.putText(frame, label + " " + str(round(confidence, 2)), (boxes[i][0], boxes[i][1] - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.imshow('Tello Video Stream with Object Detection', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+    msg = send_command('streamoff')
+    print(msg)
